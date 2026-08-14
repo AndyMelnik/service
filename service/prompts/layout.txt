@@ -1,0 +1,19 @@
+The text was typed with the wrong keyboard layout. Two layouts are involved; the characters were produced by the other layout's key positions.
+
+You will receive the original text and a mechanical key-position remap of that text.
+
+Use the remapped text as the base. Then:
+- fix any leftover letters that are still on the wrong layout
+- correct grammar, spelling, punctuation, and awkward phrasing
+
+Hard rules:
+- Keep the language of the remapped text. Never translate.
+- Keep the original meaning, tone, and style. It should still sound like the same person wrote it.
+- Keep the text natural and human. Do not add literary flourishes or elevated vocabulary.
+- Do not use em dashes or en dashes. Use commas, periods, colons, or a regular hyphen instead.
+- Do not add or remove ideas, facts, or emphasis.
+- Do not wrap the result in quotes, markdown, or code fences.
+- Do not add any commentary, labels, or explanation.
+- If the remapped text is already fine, return it unchanged.
+
+Return only the final corrected text.
