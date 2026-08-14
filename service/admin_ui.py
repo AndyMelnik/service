@@ -48,7 +48,7 @@ h1 {
   padding: 10px 0 4px;
   border-top: 1px solid var(--hair);
 }
-.pill, .stat {
+.pill {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -68,6 +68,61 @@ h1 {
 .pill.ok i { background: var(--ok); }
 .pill.warn i { background: var(--warn); }
 .pill.bad i { background: var(--bad); }
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin: 12px 0 4px;
+}
+.metric {
+  background: var(--panel);
+  border: 1px solid var(--hair);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.metric .n {
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+  margin: 0;
+}
+.metric .lbl { font-weight: 600; margin: 0 0 2px; }
+.metric .hint { color: var(--mute); font-size: 12px; margin: 0; }
+@media (max-width: 700px) { .metrics { grid-template-columns: 1fr; } }
+.kv th {
+  width: 40%;
+  color: var(--mute);
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 13px;
+}
+.quota { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
+.bar {
+  display: inline-block;
+  width: 72px;
+  height: 6px;
+  border-radius: 99px;
+  background: var(--hair);
+  overflow: hidden;
+}
+.bar i { display: block; height: 100%; background: var(--ok); }
+.bar.warn i { background: var(--warn); }
+.bar.bad i { background: var(--bad); }
+.sub { color: var(--mute); font-size: 12px; margin-top: 2px; }
+.devices-table { background: var(--panel); border: 1px solid var(--hair); border-radius: 10px; overflow: hidden; }
+.devices-table table { margin: 0; }
+.devices-table td { vertical-align: middle; padding: 10px 12px; }
+.devices-table th { padding: 8px 12px; }
+details.config > summary {
+  cursor: pointer;
+  color: var(--mute);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-weight: 600;
+  margin: 18px 0 8px;
+}
 .split {
   display: grid;
   grid-template-columns: 1.2fr 1fr;
@@ -118,62 +173,6 @@ button {
 }
 .err { color: var(--bad); margin-top: 12px; }
 .row { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
-.live-row, .device > summary {
-  display: grid;
-  grid-template-columns: 10px minmax(90px, 1.2fr) minmax(90px, 1fr) 72px 70px;
-  gap: 10px;
-  align-items: center;
-}
-.dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--mute);
-}
-.dot.live { background: var(--live); box-shadow: 0 0 0 3px rgba(15, 122, 74, 0.15); }
-.dot.idle { background: var(--warn); }
-.devices { border: 1px solid var(--hair); border-radius: 10px; background: var(--panel); overflow: hidden; }
-.device { border-bottom: 1px solid var(--hair); }
-.device:last-child { border-bottom: 0; }
-.device > summary {
-  list-style: none;
-  cursor: pointer;
-  padding: 8px 12px;
-}
-.device > summary::-webkit-details-marker { display: none; }
-.device .name { font-weight: 600; }
-.device .id, .facts .mono { color: var(--mute); font-size: 12px; }
-.facts {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 6px 16px;
-  padding: 0 12px 12px 30px;
-  color: var(--mute);
-  font-size: 12px;
-}
-.limits {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 1px;
-  background: var(--hair);
-  border: 1px solid var(--hair);
-  border-radius: 10px;
-  overflow: hidden;
-}
-.limits div { background: var(--panel); padding: 10px 12px; }
-.limits dt { color: var(--mute); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; }
-.limits dd { margin: 3px 0 0; font-size: 15px; }
-details.config > summary {
-  cursor: pointer;
-  list-style: none;
-  color: var(--mute);
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  font-weight: 600;
-  margin: 18px 0 8px;
-}
-details.config > summary::-webkit-details-marker { display: none; }
 .log-toolbar { margin-bottom: 6px; }
 .log-toolbar button { margin-top: 0; padding: 5px 10px; font-size: 12px; }
 .log-scroll {
@@ -231,6 +230,40 @@ def _status_class(status: int) -> str:
     return "ok"
 
 
+def _format_limit(label: str, value: object) -> tuple[str, str]:
+    text = str(value)
+    pretty = {
+        "Daily quota": ("Daily quota", f"{text} requests per device per day"),
+        "Max text": ("Max selected text", f"{text} characters"),
+        "Max extras": ("Max extra notes", f"{text} characters"),
+        "Timestamp skew": ("Signature time window", text.replace("s", " seconds") if text.endswith("s") else text),
+        "Nonce TTL": ("Nonce lifetime", text.replace("s", " seconds") if text.endswith("s") else text),
+        "Devices / invite": ("Devices per invite", text if text == "unlimited" else f"{text} devices"),
+        "Model": ("Model chain", text.replace(" → ", " → ")),
+        "LLM base": ("LLM host", text),
+        "LLM path": ("LLM path", text),
+        "LLM timeout": ("LLM timeout", text.replace("s", " seconds") if str(text).endswith("s") else text),
+        "LLM max tokens": ("Max tokens", text),
+        "Temp / expand": ("Temperature (edit / expand)", text),
+        "Require HTTPS": ("Require HTTPS", "On" if text == "yes" else "Off"),
+        "Trust proxy": ("Trust proxy headers", "On" if text == "yes" else "Off"),
+        "Invite tokens": ("Invite tokens", text),
+        "Reset at": ("Quota resets", text.replace("T", " ").replace("+00:00", " UTC")),
+        "Data path": ("Data file", text),
+    }
+    return pretty.get(label, (label, text))
+
+
+def _quota_bar(used: int, limit: int) -> str:
+    cls = _quota_class(used, limit)
+    pct = 0 if limit <= 0 else min(100, round(100 * used / limit))
+    bar_cls = f"bar {cls}".strip()
+    return (
+        f'<div class="quota"><span class="{cls}">{used} / {limit}</span>'
+        f'<span class="{bar_cls}"><i style="width:{pct}%"></i></span></div>'
+    )
+
+
 def _model_state_class(state: str) -> str:
     if state == "available":
         return "ok"
@@ -242,14 +275,6 @@ def _model_state_class(state: str) -> str:
 def _short_model(model: str) -> str:
     name = (model or "").split("/")[-1]
     return name.replace(":free", "") or model
-
-
-def _dot_class(presence: str) -> str:
-    if presence == "Live":
-        return "live"
-    if presence == "Idle":
-        return "idle"
-    return ""
 
 
 def render_login(error: str = "") -> str:
@@ -280,10 +305,16 @@ def render_login(error: str = "") -> str:
 
 def render_dashboard(data: dict) -> str:
     limits = data["limits"]
-    limit_items = "".join(
-        f"<div><dt>{escape(item['label'])}</dt><dd>{escape(str(item['value']))}</dd></div>"
-        for item in limits
-    )
+    limit_rows = []
+    for item in limits:
+        label, value = _format_limit(item["label"], item["value"])
+        limit_rows.append(
+            "<tr>"
+            + f"<th>{escape(label)}</th>"
+            + f"<td>{escape(value)}</td>"
+            + "</tr>"
+        )
+    limits_html = "".join(limit_rows)
     health = data.get("health") or {}
     api_cls = "ok" if health.get("api") == "ok" else "bad"
     storage_state = str(health.get("storage") or "unknown")
@@ -320,50 +351,42 @@ def render_dashboard(data: dict) -> str:
     )
 
     live_rows = []
-    device_items = []
+    device_rows = []
     for row in data["sessions"]:
         presence = str(row.get("presence") or "Away")
-        qcls = _quota_class(row["used"], row["limit"])
-        summary = (
-            f'<span class="dot {_dot_class(presence)}"></span>'
-            f'<span class="name">{escape(row["name"] or "Unnamed")}</span>'
-            f'<span class="id mono">{escape(row.get("shortId") or "—")}</span>'
-            f'<span class="num {qcls}">{row["used"]}/{row["limit"]}</span>'
-            f'<span class="meta">{escape(str(row.get("seenAgo") or "—"))}</span>'
-        )
+        name = escape(row["name"] or "Unnamed device")
+        platform = escape(str(row.get("platform") or "Unknown client"))
         if row.get("live"):
-            live_rows.append(f'<div class="live-row">{summary}</div>')
-        facts = [
-            ("Status", row.get("status") or "Active"),
-            ("Client", row.get("platform") or "Unknown client"),
-            ("Invite", f"{row.get('tokenName') or 'unknown'} ({row.get('tokenRef') or '—'})"),
-            ("Registered", row.get("createdLabel") or "unknown"),
-            ("Last seen", row.get("lastSeenLabel") or "never"),
-            ("Quota", row.get("quotaLabel") or f'{row["used"]}/{row["limit"]}'),
-            ("Resets", row.get("resetLabel") or "—"),
-            ("Device ID", row.get("id") or "—"),
-        ]
-        if row.get("lastIp"):
-            facts.append(("Last IP", row["lastIp"]))
-        if row.get("userAgent"):
-            facts.append(("User-Agent", row["userAgent"]))
-        fact_html = "".join(
-            f"<div><strong>{escape(str(label))}</strong><div class=\"mono\">{escape(str(value))}</div></div>"
-            for label, value in facts
-        )
-        device_items.append(
-            f"<details class=\"device\"><summary>{summary}</summary>"
-            f"<div class=\"facts\">{fact_html}</div></details>"
+            live_rows.append(
+                "<tr>"
+                + f"<td><strong>{name}</strong><div class=\"sub\">{platform}</div></td>"
+                + _cell(row.get("seenAgo") or "just now")
+                + f'<td>{_quota_bar(row["used"], row["limit"])}</td>'
+                + "</tr>"
+            )
+        device_rows.append(
+            "<tr>"
+            + (
+                f"<td title=\"{escape(row.get('id') or '')}\"><strong>{name}</strong>"
+                f"<div class=\"sub\">{platform} · {escape(row.get('shortId') or '')}</div></td>"
+            )
+            + _cell(row.get("createdLabel") or "unknown")
+            + _cell(row.get("lastSeenLabel") or row.get("seenAgo") or "never")
+            + f'<td>{_quota_bar(row["used"], row["limit"])}</td>'
+            + "</tr>"
         )
 
     live_html = (
-        "".join(live_rows)
+        "<table><thead><tr><th>Device</th><th>Last active</th><th class=\"num\">Today</th></tr></thead>"
+        f"<tbody>{''.join(live_rows)}</tbody></table>"
         if live_rows
         else '<p class="empty">No devices active in the last 2 minutes.</p>'
     )
     devices_html = (
-        f'<div class="devices">{"".join(device_items)}</div>'
-        if device_items
+        "<div class=\"devices-table\"><table><thead><tr>"
+        "<th>Device</th><th>Registered</th><th>Last session</th><th class=\"num\">Today / limit</th>"
+        f"</tr></thead><tbody>{''.join(device_rows)}</tbody></table></div>"
+        if device_rows
         else '<p class="empty">No devices registered yet.</p>'
     )
 
@@ -412,15 +435,29 @@ def render_dashboard(data: dict) -> str:
       <span class="pill {api_cls}"><i></i>API</span>
       <span class="pill {storage_cls}"><i></i>Storage · {escape(storage_state)}</span>
       {''.join(model_pills)}
-      <span class="stat">{live_n} live</span>
-      <span class="stat">{registered_n} devices</span>
-      <span class="stat">{today_n} today</span>
     </div>
-    <p class="meta">Models checked UTC {models_checked}</p>
+    <p class="meta">Model status checked UTC {models_checked}</p>
+    <div class="metrics">
+      <div class="metric">
+        <p class="lbl">Active now</p>
+        <p class="n">{live_n}</p>
+        <p class="hint">Devices online in the last 2 minutes</p>
+      </div>
+      <div class="metric">
+        <p class="lbl">Registered devices</p>
+        <p class="n">{registered_n}</p>
+        <p class="hint">Unique Macs that have joined this service</p>
+      </div>
+      <div class="metric">
+        <p class="lbl">Requests today</p>
+        <p class="n">{today_n}</p>
+        <p class="hint">API calls since 00:00 UTC</p>
+      </div>
+    </div>
 
     <div class="split">
       <section class="panel">
-        <h1>Live</h1>
+        <h1>Active now</h1>
         {live_html}
       </section>
       <section class="panel">
@@ -457,9 +494,13 @@ def render_dashboard(data: dict) -> str:
       </table>
     </div>
 
-    <details class="config">
+    <details class="config" open>
       <summary>Limits</summary>
-      <dl class="limits">{limit_items}</dl>
+      <div class="panel" style="padding:0 4px;">
+        <table class="kv">
+          <tbody>{limits_html}</tbody>
+        </table>
+      </div>
     </details>
   </main>
   <script>

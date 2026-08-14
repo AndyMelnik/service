@@ -47,15 +47,19 @@ def test_admin_shows_limits_tokens_and_sessions(client, auth, mock_llm):
     assert dashboard.status_code == 200
     html = dashboard.text
     assert "Daily quota" in html
-    assert ">80<" in html
-    assert "Max text" in html
+    assert "80 requests per device per day" in html
+    assert "Max selected text" in html
     assert "token 1" in html
     assert token_ref("invite-a") in html
     assert "studio-mac" in html
-    assert "1/80" in html
-    assert "1 of 80 used today" in html
+    assert "1 / 80" in html
     assert "Devices" in html
-    assert "Device ID" in html
+    assert "Registered" in html
+    assert "Last session" in html
+    assert "Today / limit" in html
+    assert "Active now" in html
+    assert "Registered devices" in html
+    assert "Requests today" in html
     assert "Clear window" in html
     assert "Refresh" in html
     assert 'content="30"' in html
@@ -71,7 +75,7 @@ def test_admin_shows_limits_tokens_and_sessions(client, auth, mock_llm):
     assert "nvidia/nemotron-3-super-120b-a12b:free" in html
     assert "available" in html
     assert "unavailable" in html
-    assert "Live" in html
+    assert "Active now" in html
 
 
 def test_admin_accepts_bearer(client):
@@ -79,6 +83,6 @@ def test_admin_accepts_bearer(client):
     assert response.status_code == 200
     assert "Limits" in response.text
     assert "Devices" in response.text
-    assert "Live" in response.text
+    assert "Active now" in response.text
     assert "Request log" in response.text
     assert "Clear window" in response.text
