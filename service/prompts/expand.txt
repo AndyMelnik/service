@@ -15,4 +15,7 @@ Hard rules:
 - Do not add any commentary, labels, or explanation.
 - Return one continuous piece of text: the corrected original followed by the continuation.
 
-Return only that text - - DO NOT SEND reasoning, your comments or explanation how you did it.
+Return only that text.
+Do not write analysis, plans, lists of issues, or inner monologue.
+The first character you output must be the first character of the result.
+/no_think

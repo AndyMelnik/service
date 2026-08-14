@@ -429,6 +429,20 @@ def test_clean_output_strips_fences_and_dashes():
     assert service.clean_output('Corrected text: "ok"') == "ok"
 
 
+def test_clean_output_extracts_result_from_reasoning():
+    raw = (
+        "The user wants me to proofread the Russian text.\n"
+        "Issues to fix: spelling.\n"
+        'Corrected version:\n"Что происходит? Почему модель не отрабатывает быстро."'
+    )
+    assert service.clean_output(raw) == "Что происходит? Почему модель не отрабатывает быстро."
+
+
+def test_clean_output_drops_pure_reasoning():
+    raw = "The user wants me to proofread the Russian text between the markers. Let me analyze the text."
+    assert service.clean_output(raw) == ""
+
+
 def test_canonical_message_matches_client():
     text = "Hello"
     extras = ""
@@ -527,6 +541,59 @@ def test_call_llm_falls_back_when_primary_fails(monkeypatch):
     monkeypatch.delenv("LLM_MODEL_FALLBACK_2", raising=False)
     result = asyncio.run(service.call_llm("proofread", "hello", ""))
     assert result == "ok via nvidia/nemotron-3-super-120b-a12b:free"
+    assert FakeClient.calls[0] == "openai/gpt-4o-mini"
+    assert FakeClient.calls[1] == "nvidia/nemotron-3-super-120b-a12b:free"
+
+
+def test_call_llm_skips_reasoning_dump(monkeypatch):
+    import asyncio
+
+    class FakeResponse:
+        def __init__(self, status_code, payload):
+            self.status_code = status_code
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            model = json["model"]
+            FakeClient.calls.append(model)
+            assert json.get("reasoning", {}).get("exclude") is True
+            if model == "openai/gpt-4o-mini":
+                return FakeResponse(
+                    200,
+                    {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": "The user wants me to proofread the Russian text between the markers."
+                                }
+                            }
+                        ]
+                    },
+                )
+            return FakeResponse(200, {"choices": [{"message": {"content": "Исправленный текст."}}]})
+
+    FakeClient.calls = []
+    monkeypatch.setenv("LLM_API_KEY", "sk-test")
+    monkeypatch.setenv("LLM_BASE_URL", "https://example.invalid/api/v1")
+    monkeypatch.setenv("LLM_MODEL", "openai/gpt-4o-mini")
+    monkeypatch.setattr(service.httpx, "AsyncClient", FakeClient)
+    monkeypatch.delenv("LLM_MODEL_FALLBACK", raising=False)
+    monkeypatch.delenv("LLM_MODEL_FALLBACK_2", raising=False)
+    result = asyncio.run(service.call_llm("proofread", "hello", ""))
+    assert result == "Исправленный текст."
     assert FakeClient.calls[0] == "openai/gpt-4o-mini"
     assert FakeClient.calls[1] == "nvidia/nemotron-3-super-120b-a12b:free"
 

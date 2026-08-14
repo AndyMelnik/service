@@ -891,19 +891,66 @@ def clean_output(text: str) -> str:
             lines = lines[:-1]
         text = "\n".join(lines).strip()
 
+    extracted = re.search(
+        r"(?is)(?:corrected version|corrected text|edited text|final text)\s*:\s*(.+)\Z",
+        text,
+    )
+    if extracted:
+        text = extracted.group(1).strip()
+
     lowered = text.casefold()
-    for prefix in ("corrected text:", "edited text:"):
+    for prefix in ("corrected text:", "edited text:", "corrected version:"):
         if lowered.startswith(prefix):
             text = text[len(prefix) :].strip()
             break
 
-    if len(text) >= 2 and text[0] == '"' and text[-1] == '"':
+    if len(text) >= 2 and text[0] in {'"', "«"} and text[-1] in {'"', "»"}:
         inner = text[1:-1]
-        if '"' not in inner:
+        if '"' not in inner and "«" not in inner:
             text = inner.strip()
 
-    text = re.sub(r"\s*[\u2014\u2013]\s*", " - ", text)
-    return text.strip()
+    text = re.sub(r"\s*[\u2014\u2013]\s*", " - ", text).strip()
+    if looks_like_reasoning(text):
+        return ""
+    return text
+
+
+def looks_like_reasoning(text: str) -> bool:
+    lowered = (text or "").casefold().lstrip()
+    if not lowered:
+        return False
+    heads = (
+        "the user wants",
+        "let me analyze",
+        "let me look",
+        "let me correct",
+        "i need to correct",
+        "i need to proofread",
+        "i'll analyze",
+        "issues to fix",
+        "looking at the text",
+        "wait, ",
+    )
+    return any(lowered.startswith(head) for head in heads)
+
+
+def llm_message_content(payload: dict) -> str:
+    message = payload["choices"][0]["message"]
+    content = message.get("content")
+    if isinstance(content, list):
+        chunks = []
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            if str(part.get("type") or "") in {"reasoning", "thought"}:
+                continue
+            chunks.append(str(part.get("text") or part.get("content") or ""))
+        content = "".join(chunks)
+    if not isinstance(content, str) or not content.strip():
+        content = message.get("reasoning_content") or ""
+        if isinstance(content, str) and looks_like_reasoning(content):
+            content = ""
+    return content if isinstance(content, str) else ""
 
 
 def max_tokens_for(action: str, text: str) -> int:
@@ -927,6 +974,7 @@ async def call_llm(action: str, text: str, extras: str) -> str:
             f"{extras}"
         )
     user = (
+        "Reply with the edited text only. No analysis, no lists, no quotes around the whole result.\n"
         "Edit only the text between the markers.\n"
         "<<<TEXT\n"
         f"{text}\n"
@@ -950,6 +998,7 @@ async def call_llm(action: str, text: str, extras: str) -> str:
                         "model": model,
                         "temperature": llm_temperature(action),
                         "max_tokens": max_tokens_for(action, text),
+                        "reasoning": {"exclude": True, "effort": "none"},
                         "messages": [
                             {"role": "system", "content": prompt},
                             {"role": "user", "content": user},
@@ -977,15 +1026,15 @@ async def call_llm(action: str, text: str, extras: str) -> str:
 
             try:
                 payload = response.json()
-                content = payload["choices"][0]["message"]["content"]
+                content = llm_message_content(payload)
             except (ValueError, KeyError, IndexError, TypeError):
                 log.warning("llm_bad_payload model=%s action=%s", model, action)
                 last_error = "unavailable"
                 continue
 
-            cleaned = clean_output(content if isinstance(content, str) else "")
+            cleaned = clean_output(content)
             if not cleaned:
-                log.warning("llm_empty model=%s action=%s", model, action)
+                log.warning("llm_rejected_output model=%s action=%s", model, action)
                 last_error = "empty"
                 continue
 
