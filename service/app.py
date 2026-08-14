@@ -688,6 +688,66 @@ def remember_event(request: Request, status_code: int, latency_ms: int) -> None:
         )
 
 
+def format_age(seconds: float) -> str:
+    if seconds < 45:
+        return "just now"
+    if seconds < 3600:
+        return f"{int(seconds // 60)}m ago"
+    if seconds < 86400:
+        return f"{int(seconds // 3600)}h ago"
+    return f"{int(seconds // 86400)}d ago"
+
+
+def device_presence(last_seen_at: str, now: datetime | None = None) -> tuple[str, str, bool]:
+    current = now or utc_now()
+    raw = (last_seen_at or "").strip()
+    if not raw:
+        return "Away", "never", False
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        age = max(0.0, (current - parsed.astimezone(timezone.utc)).total_seconds())
+    except ValueError:
+        return "Away", raw, False
+    if age <= 120:
+        return "Live", format_age(age), True
+    if age <= 3600:
+        return "Idle", format_age(age), False
+    return "Away", format_age(age), False
+
+
+def remember_device_meta(device: dict, request: Request) -> None:
+    ua = (request.headers.get("user-agent") or "").strip()[:180]
+    if ua:
+        device["userAgent"] = ua
+    ip = client_ip(request)
+    if ip and ip != "unknown":
+        device["lastIp"] = ip
+
+
+def redact_ip(ip: str) -> str:
+    if not ip:
+        return ""
+    if not admin_redact_sensitive():
+        return ip
+    if "." in ip and ip.count(".") == 3:
+        parts = ip.split(".")
+        return ".".join(parts[:3] + ["x"])
+    return ip
+
+
+def platform_from_agent(user_agent: str) -> str:
+    ua = (user_agent or "").strip()
+    if not ua:
+        return "Unknown client"
+    if "Proovixy-macOS" in ua:
+        return "macOS app"
+    if "Mozilla" in ua:
+        return "Browser"
+    return ua[:48]
+
+
 def format_admin_time(value: str) -> str:
     raw = (value or "").strip()
     if not raw:
@@ -718,6 +778,8 @@ def admin_payload() -> dict:
         remaining = max(0, limit - used)
         exhausted = limit > 0 and used >= limit
         token_key = device.get("tokenRef") or ""
+        presence, seen_ago, live = device_presence(device.get("lastSeenAt") or "", now)
+        user_agent = device.get("userAgent") or ""
         sessions.append(
             {
                 "id": device_id,
@@ -727,6 +789,9 @@ def admin_payload() -> dict:
                 "lastSeenAt": device.get("lastSeenAt") or "",
                 "createdLabel": format_admin_time(device.get("createdAt") or "") or "unknown",
                 "lastSeenLabel": format_admin_time(device.get("lastSeenAt") or "") or "never",
+                "seenAgo": seen_ago,
+                "presence": presence,
+                "live": live,
                 "resetLabel": format_admin_time(quota["resetAt"]) or quota["resetAt"],
                 "tokenRef": token_key,
                 "tokenName": token_names.get(token_key, "unknown invite"),
@@ -739,6 +804,9 @@ def admin_payload() -> dict:
                     else f"{used} requests today, unlimited"
                 ),
                 "status": "Quota reached" if exhausted else "Active",
+                "userAgent": user_agent,
+                "platform": platform_from_agent(user_agent),
+                "lastIp": redact_ip(str(device.get("lastIp") or "")),
             }
         )
     sessions.sort(key=lambda row: row["lastSeenAt"] or row["createdAt"], reverse=True)
@@ -760,8 +828,24 @@ def admin_payload() -> dict:
             }
         )
 
+    configured_data = env_str("DATA_PATH", str(ROOT / "data" / "store.json"))
+    resolved_data = str(data_path())
+    storage_state = "ok"
+    if Path(configured_data).expanduser() != Path(resolved_data):
+        storage_state = "fallback"
+    live_count = sum(1 for row in sessions if row.get("live"))
+    requests_today = sum(1 for event in EVENTS if str(event.get("at", "")).startswith(day))
+
     return {
         "generatedAt": now.strftime("%Y-%m-%d %H:%M:%S"),
+        "health": {
+            "api": "ok",
+            "storage": storage_state,
+            "https": "required" if require_https() else "optional",
+            "live": live_count,
+            "registered": len(sessions),
+            "requestsToday": requests_today,
+        },
         "limits": [
             {"label": "Daily quota", "value": daily_quota()},
             {"label": "Max text", "value": max_text_chars()},
@@ -1019,6 +1103,7 @@ def register(request: Request, body: RegisterBody, authorization: str | None = H
                 "usage": {},
             }
             devices[body.deviceId] = existing
+        remember_device_meta(existing, request)
         quota = quota_view(existing)
     return {"ok": True, "quota": quota}
 
@@ -1108,6 +1193,7 @@ async def complete(
         device["usage"] = usage
         device["lastSeenAt"] = utc_now().isoformat()
         device["tokenRef"] = token_ref(token)
+        remember_device_meta(device, request)
         quota = quota_view(device)
 
     result = await call_llm(action, text, extras)

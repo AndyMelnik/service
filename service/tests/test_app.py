@@ -412,6 +412,17 @@ def test_format_admin_time():
     assert service.format_admin_time("") == ""
 
 
+def test_device_presence_and_age():
+    now = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
+    live, ago, is_live = service.device_presence("2026-08-14T11:59:30+00:00", now)
+    assert live == "Live"
+    assert is_live is True
+    assert ago == "just now"
+    away, _, is_live = service.device_presence("2026-08-13T12:00:00+00:00", now)
+    assert away == "Away"
+    assert is_live is False
+
+
 def test_clean_output_strips_fences_and_dashes():
     raw = "```\nHello — world – yes\n```"
     assert service.clean_output(raw) == "Hello - world - yes"

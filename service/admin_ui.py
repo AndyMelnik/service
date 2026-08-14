@@ -3,60 +3,106 @@ from urllib.parse import parse_qs
 
 CSS = """
 :root {
-  --ink: #16130f;
-  --paper: #f4efe6;
-  --mute: #6e675c;
-  --line: #16130f;
-  --bad: #8f1d1d;
+  --ink: #1b1814;
+  --paper: #f3efe7;
+  --panel: #fbf8f2;
+  --mute: #6f675c;
+  --hair: #ddd4c6;
+  --line: #cfc4b3;
+  --bad: #9b2c2c;
   --warn: #8a5a12;
-  --ok: #1f4d32;
+  --ok: #1f6b43;
+  --live: #0f7a4a;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
 body {
-  font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
   background: var(--paper);
   color: var(--ink);
 }
 a { color: inherit; }
-header, main, .auth { max-width: 1100px; margin: 0 auto; padding: 28px 22px; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+header, main, .auth { max-width: 1080px; margin: 0 auto; padding: 18px 20px; }
 header {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  border-bottom: 2px solid var(--line);
-  padding-bottom: 16px;
+  padding-bottom: 12px;
 }
-header strong { font-size: 15px; letter-spacing: 0.12em; }
-header span, .meta { color: var(--mute); }
-h1 { font-size: 13px; letter-spacing: 0.16em; text-transform: uppercase; margin: 28px 0 10px; }
-.limits {
+header strong { font-size: 13px; letter-spacing: 0.18em; }
+header span, .meta { color: var(--mute); font-size: 12px; }
+h1 {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--mute);
+  font-weight: 600;
+  margin: 18px 0 8px;
+}
+.status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 0 4px;
+  border-top: 1px solid var(--hair);
+}
+.pill, .stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--hair);
+  background: var(--panel);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+.pill i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--mute);
+  display: inline-block;
+}
+.pill.ok i { background: var(--ok); }
+.pill.warn i { background: var(--warn); }
+.pill.bad i { background: var(--bad); }
+.split {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 1px;
-  background: var(--line);
-  border: 1px solid var(--line);
+  grid-template-columns: 1.2fr 1fr;
+  gap: 18px;
 }
-.limits div { background: var(--paper); padding: 12px 14px; }
-.limits dt { color: var(--mute); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
-.limits dd { margin: 4px 0 0; font-size: 16px; }
+@media (max-width: 800px) { .split { grid-template-columns: 1fr; } }
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--hair);
+  border-radius: 10px;
+  padding: 4px 12px 10px;
+}
 table { width: 100%; border-collapse: collapse; }
-th, td { text-align: left; padding: 7px 8px; vertical-align: top; border-bottom: 1px solid var(--line); }
-th { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--mute); font-weight: 500; }
+th, td { text-align: left; padding: 6px 6px; vertical-align: top; border-bottom: 1px solid var(--hair); }
+th {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--mute);
+  font-weight: 600;
+}
 .num { text-align: right; font-variant-numeric: tabular-nums; }
 .bad { color: var(--bad); }
 .warn { color: var(--warn); }
 .ok { color: var(--ok); }
-.empty { color: var(--mute); padding: 12px 0; }
+.empty { color: var(--mute); padding: 10px 0; }
 .auth { max-width: 420px; padding-top: 18vh; }
-label { display: block; margin-bottom: 8px; letter-spacing: 0.08em; text-transform: uppercase; font-size: 11px; }
+label { display: block; margin-bottom: 8px; letter-spacing: 0.08em; text-transform: uppercase; font-size: 11px; color: var(--mute); }
 input[type=password] {
   width: 100%;
   font: inherit;
   color: var(--ink);
   background: transparent;
   border: 0;
-  border-bottom: 2px solid var(--line);
+  border-bottom: 1px solid var(--line);
   padding: 8px 0;
   outline: none;
 }
@@ -65,47 +111,83 @@ button {
   color: var(--paper);
   background: var(--ink);
   border: 0;
-  padding: 8px 14px;
+  border-radius: 8px;
+  padding: 7px 12px;
   margin-top: 18px;
   cursor: pointer;
 }
 .err { color: var(--bad); margin-top: 12px; }
-.row { display: flex; justify-content: space-between; gap: 12px; }
-.devices {
+.row { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.live-row, .device > summary {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 12px;
-}
-.device {
-  border: 1px solid var(--line);
-  padding: 14px 16px;
-}
-.device h2 {
-  font-size: 16px;
-  margin: 0 0 8px;
-  letter-spacing: 0;
-  text-transform: none;
-}
-.device p { margin: 0 0 6px; }
-.device .id { word-break: break-all; color: var(--mute); font-size: 12px; }
-.log-toolbar {
-  display: flex;
-  justify-content: space-between;
+  grid-template-columns: 10px minmax(90px, 1.2fr) minmax(90px, 1fr) 72px 70px;
+  gap: 10px;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 8px;
 }
-.log-toolbar button { margin-top: 0; padding: 6px 12px; }
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--mute);
+}
+.dot.live { background: var(--live); box-shadow: 0 0 0 3px rgba(15, 122, 74, 0.15); }
+.dot.idle { background: var(--warn); }
+.devices { border: 1px solid var(--hair); border-radius: 10px; background: var(--panel); overflow: hidden; }
+.device { border-bottom: 1px solid var(--hair); }
+.device:last-child { border-bottom: 0; }
+.device > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 8px 12px;
+}
+.device > summary::-webkit-details-marker { display: none; }
+.device .name { font-weight: 600; }
+.device .id, .facts .mono { color: var(--mute); font-size: 12px; }
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 6px 16px;
+  padding: 0 12px 12px 30px;
+  color: var(--mute);
+  font-size: 12px;
+}
+.limits {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 1px;
+  background: var(--hair);
+  border: 1px solid var(--hair);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.limits div { background: var(--panel); padding: 10px 12px; }
+.limits dt { color: var(--mute); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; }
+.limits dd { margin: 3px 0 0; font-size: 15px; }
+details.config > summary {
+  cursor: pointer;
+  list-style: none;
+  color: var(--mute);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-weight: 600;
+  margin: 18px 0 8px;
+}
+details.config > summary::-webkit-details-marker { display: none; }
+.log-toolbar { margin-bottom: 6px; }
+.log-toolbar button { margin-top: 0; padding: 5px 10px; font-size: 12px; }
 .log-scroll {
-  max-height: 320px;
+  max-height: 240px;
   overflow: auto;
-  border: 1px solid var(--line);
+  border: 1px solid var(--hair);
+  border-radius: 10px;
+  background: var(--panel);
 }
 .log-scroll table { margin: 0; }
 .log-scroll thead th {
   position: sticky;
   top: 0;
-  background: var(--paper);
+  background: var(--panel);
   z-index: 1;
 }
 .log-scroll .empty { padding: 12px 8px; }
@@ -149,6 +231,27 @@ def _status_class(status: int) -> str:
     return "ok"
 
 
+def _model_state_class(state: str) -> str:
+    if state == "available":
+        return "ok"
+    if state in {"timeout", "not configured"}:
+        return "warn"
+    return "bad"
+
+
+def _short_model(model: str) -> str:
+    name = (model or "").split("/")[-1]
+    return name.replace(":free", "") or model
+
+
+def _dot_class(presence: str) -> str:
+    if presence == "Live":
+        return "live"
+    if presence == "Idle":
+        return "idle"
+    return ""
+
+
 def render_login(error: str = "") -> str:
     err = f'<p class="err">{escape(error)}</p>' if error else ""
     return f"""<!doctype html>
@@ -175,29 +278,37 @@ def render_login(error: str = "") -> str:
 """
 
 
-def _model_state_class(state: str) -> str:
-    if state == "available":
-        return "ok"
-    if state in {"timeout", "not configured"}:
-        return "warn"
-    return "bad"
-
-
 def render_dashboard(data: dict) -> str:
     limits = data["limits"]
     limit_items = "".join(
         f"<div><dt>{escape(item['label'])}</dt><dd>{escape(str(item['value']))}</dd></div>"
         for item in limits
     )
+    health = data.get("health") or {}
+    api_cls = "ok" if health.get("api") == "ok" else "bad"
+    storage_state = str(health.get("storage") or "unknown")
+    storage_cls = "ok" if storage_state == "ok" else "warn"
+
+    model_pills = []
+    for row in data.get("models") or []:
+        cls = _model_state_class(str(row.get("state") or ""))
+        label = row.get("role") or "Model"
+        short = _short_model(str(row.get("model") or ""))
+        title = escape(f"{row.get('model') or ''} · {row.get('state') or ''} · {row.get('detail') or ''}")
+        model_pills.append(
+            f'<span class="pill {cls}" title="{title}"><i></i>{escape(str(label))} · {escape(short)}</span>'
+        )
+    if not model_pills:
+        model_pills.append('<span class="pill warn"><i></i>Models unchecked</span>')
+    models_checked = escape(str(data.get("modelsCheckedAt") or "—"))
 
     token_rows = []
     for row in data["tokens"]:
         token_rows.append(
             "<tr>"
             + _cell(row["name"])
-            + _cell(row["ref"])
+            + _cell(row["ref"], "mono")
             + _cell(row["today"], "num")
-            + _cell(row["total"], "num")
             + _cell(row["devices"], "num")
             + _cell(row["lastAt"] or "—")
             + "</tr>"
@@ -205,44 +316,54 @@ def render_dashboard(data: dict) -> str:
     tokens_html = (
         "".join(token_rows)
         if token_rows
-        else '<tr><td colspan="6" class="empty">No invite tokens configured.</td></tr>'
+        else '<tr><td colspan="5" class="empty">No invite tokens configured.</td></tr>'
     )
 
-    session_rows = []
-    device_cards = []
+    live_rows = []
+    device_items = []
     for row in data["sessions"]:
-        cls = _quota_class(row["used"], row["limit"])
-        status_cls = "bad" if row.get("status") == "Quota reached" else "ok"
-        session_rows.append(
-            "<tr>"
-            + _cell(row["name"] or "unnamed")
-            + _cell(row["shortId"])
-            + f'<td class="num {cls}">{row["used"]}/{row["limit"]}</td>'
-            + _cell(row["tokenRef"] or "—")
-            + _cell(row["lastSeenAt"] or row["createdAt"] or "—")
-            + "</tr>"
+        presence = str(row.get("presence") or "Away")
+        qcls = _quota_class(row["used"], row["limit"])
+        summary = (
+            f'<span class="dot {_dot_class(presence)}"></span>'
+            f'<span class="name">{escape(row["name"] or "Unnamed")}</span>'
+            f'<span class="id mono">{escape(row.get("shortId") or "—")}</span>'
+            f'<span class="num {qcls}">{row["used"]}/{row["limit"]}</span>'
+            f'<span class="meta">{escape(str(row.get("seenAgo") or "—"))}</span>'
         )
-        device_cards.append(
-            "<article class=\"device\">"
-            f"<h2>{escape(row['name'] or 'Unnamed device')}</h2>"
-            f"<p class=\"{status_cls}\">{escape(str(row.get('status') or 'Active'))}</p>"
-            f"<p>Registered {escape(str(row.get('createdLabel') or 'unknown'))}</p>"
-            f"<p>Last seen {escape(str(row.get('lastSeenLabel') or 'never'))}</p>"
-            f"<p>Invite {escape(str(row.get('tokenName') or 'unknown invite'))}"
-            f" ({escape(row.get('tokenRef') or '—')})</p>"
-            f"<p class=\"{cls}\">{escape(str(row.get('quotaLabel') or f'{row['used']}/{row['limit']}'))}</p>"
-            f"<p>Resets {escape(str(row.get('resetLabel') or '—'))}</p>"
-            f"<p class=\"id\">Device ID {escape(row.get('id') or row.get('shortId') or '—')}</p>"
-            "</article>"
+        if row.get("live"):
+            live_rows.append(f'<div class="live-row">{summary}</div>')
+        facts = [
+            ("Status", row.get("status") or "Active"),
+            ("Client", row.get("platform") or "Unknown client"),
+            ("Invite", f"{row.get('tokenName') or 'unknown'} ({row.get('tokenRef') or '—'})"),
+            ("Registered", row.get("createdLabel") or "unknown"),
+            ("Last seen", row.get("lastSeenLabel") or "never"),
+            ("Quota", row.get("quotaLabel") or f'{row["used"]}/{row["limit"]}'),
+            ("Resets", row.get("resetLabel") or "—"),
+            ("Device ID", row.get("id") or "—"),
+        ]
+        if row.get("lastIp"):
+            facts.append(("Last IP", row["lastIp"]))
+        if row.get("userAgent"):
+            facts.append(("User-Agent", row["userAgent"]))
+        fact_html = "".join(
+            f"<div><strong>{escape(str(label))}</strong><div class=\"mono\">{escape(str(value))}</div></div>"
+            for label, value in facts
         )
-    sessions_html = (
-        "".join(session_rows)
-        if session_rows
-        else '<tr><td colspan="5" class="empty">No devices registered yet.</td></tr>'
+        device_items.append(
+            f"<details class=\"device\"><summary>{summary}</summary>"
+            f"<div class=\"facts\">{fact_html}</div></details>"
+        )
+
+    live_html = (
+        "".join(live_rows)
+        if live_rows
+        else '<p class="empty">No devices active in the last 2 minutes.</p>'
     )
     devices_html = (
-        f'<div class="devices">{"".join(device_cards)}</div>'
-        if device_cards
+        f'<div class="devices">{"".join(device_items)}</div>'
+        if device_items
         else '<p class="empty">No devices registered yet.</p>'
     )
 
@@ -253,13 +374,13 @@ def render_dashboard(data: dict) -> str:
             "<tr"
             + f' data-at="{escape(str(row["at"]))}"'
             + ">"
-            + _cell(row["at"])
+            + _cell(row["at"], "mono")
             + _cell(row["path"])
             + _cell(row["action"])
             + f'<td class="num {cls}">{row["status"]}</td>'
             + _cell(row["latencyMs"], "num")
             + _cell(row["deviceName"] or row["shortId"] or "—")
-            + _cell(row["tokenRef"] or "—")
+            + _cell(row["tokenRef"] or "—", "mono")
             + "</tr>"
         )
     events_html = (
@@ -268,81 +389,59 @@ def render_dashboard(data: dict) -> str:
         else '<tr><td colspan="7" class="empty">No requests in this process yet.</td></tr>'
     )
 
-    model_rows = []
-    for row in data.get("models") or []:
-        cls = _model_state_class(str(row.get("state") or ""))
-        model_rows.append(
-            "<tr>"
-            + _cell(row.get("role") or "—")
-            + _cell(row.get("model") or "—")
-            + f'<td class="{cls}">{escape(str(row.get("state") or "—"))}</td>'
-            + _cell(row.get("detail") or "—")
-            + "</tr>"
-        )
-    models_html = (
-        "".join(model_rows)
-        if model_rows
-        else '<tr><td colspan="4" class="empty">No models configured.</td></tr>'
-    )
-    models_checked = escape(str(data.get("modelsCheckedAt") or "—"))
-
     generated = escape(data["generatedAt"])
+    live_n = escape(str(health.get("live", 0)))
+    registered_n = escape(str(health.get("registered", 0)))
+    today_n = escape(str(health.get("requestsToday", 0)))
     return f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="refresh" content="15">
+  <meta http-equiv="refresh" content="30">
   <title>Proovixy admin</title>
   <style>{CSS}</style>
 </head>
 <body>
   <header>
     <strong>PROOVIXY</strong>
-    <span class="row">UTC {generated} · <a href="/admin/logout">sign out</a></span>
+    <span class="row">UTC {generated} · <a href="/admin">Refresh</a> · <a href="/admin/logout">sign out</a></span>
   </header>
   <main>
-    <h1>Limits</h1>
-    <dl class="limits">{limit_items}</dl>
+    <div class="status">
+      <span class="pill {api_cls}"><i></i>API</span>
+      <span class="pill {storage_cls}"><i></i>Storage · {escape(storage_state)}</span>
+      {''.join(model_pills)}
+      <span class="stat">{live_n} live</span>
+      <span class="stat">{registered_n} devices</span>
+      <span class="stat">{today_n} today</span>
+    </div>
+    <p class="meta">Models checked UTC {models_checked}</p>
 
-    <h1>Models</h1>
-    <p class="meta">Last check UTC {models_checked}</p>
-    <table>
-      <thead>
-        <tr>
-          <th>Role</th><th>Model</th><th>Status</th><th>Detail</th>
-        </tr>
-      </thead>
-      <tbody>{models_html}</tbody>
-    </table>
-
-    <h1>Tokens</h1>
-    <table>
-      <thead>
-        <tr>
-          <th>Token</th><th>Ref</th><th class="num">Today</th>
-          <th class="num">Log</th><th class="num">Devices</th><th>Last seen</th>
-        </tr>
-      </thead>
-      <tbody>{tokens_html}</tbody>
-    </table>
+    <div class="split">
+      <section class="panel">
+        <h1>Live</h1>
+        {live_html}
+      </section>
+      <section class="panel">
+        <h1>Invites</h1>
+        <table>
+          <thead>
+            <tr>
+              <th>Token</th><th>Ref</th><th class="num">Today</th>
+              <th class="num">Devices</th><th>Last seen</th>
+            </tr>
+          </thead>
+          <tbody>{tokens_html}</tbody>
+        </table>
+      </section>
+    </div>
 
     <h1>Devices</h1>
     {devices_html}
 
-    <h1>Sessions</h1>
-    <table>
-      <thead>
-        <tr>
-          <th>Device</th><th>Id</th><th class="num">Quota</th>
-          <th>Token</th><th>Last seen</th>
-        </tr>
-      </thead>
-      <tbody>{sessions_html}</tbody>
-    </table>
-
     <h1>Request log</h1>
-    <div class="log-toolbar">
+    <div class="log-toolbar row">
       <p class="meta">Scroll stays in this window. Clear hides rows here only — server history is kept.</p>
       <button type="button" id="clear-log">Clear window</button>
     </div>
@@ -357,6 +456,11 @@ def render_dashboard(data: dict) -> str:
         <tbody id="log-body">{events_html}</tbody>
       </table>
     </div>
+
+    <details class="config">
+      <summary>Limits</summary>
+      <dl class="limits">{limit_items}</dl>
+    </details>
   </main>
   <script>
     (function () {{

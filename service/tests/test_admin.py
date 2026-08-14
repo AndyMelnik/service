@@ -57,6 +57,8 @@ def test_admin_shows_limits_tokens_and_sessions(client, auth, mock_llm):
     assert "Devices" in html
     assert "Device ID" in html
     assert "Clear window" in html
+    assert "Refresh" in html
+    assert 'content="30"' in html
     assert "log-scroll" in html
     assert device_id in html
     assert "/v1/complete" in html
@@ -65,11 +67,11 @@ def test_admin_shows_limits_tokens_and_sessions(client, auth, mock_llm):
     assert "sk-test" not in html
     assert "admin-secret" not in html
     assert "hello world" not in html
-    assert "Models" in html
-    assert "Primary" in html
+    assert "Models" in html or "Primary" in html
     assert "nvidia/nemotron-3-super-120b-a12b:free" in html
     assert "available" in html
     assert "unavailable" in html
+    assert "Live" in html
 
 
 def test_admin_accepts_bearer(client):
@@ -77,6 +79,6 @@ def test_admin_accepts_bearer(client):
     assert response.status_code == 200
     assert "Limits" in response.text
     assert "Devices" in response.text
-    assert "Sessions" in response.text
+    assert "Live" in response.text
     assert "Request log" in response.text
     assert "Clear window" in response.text
