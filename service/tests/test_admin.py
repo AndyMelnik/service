@@ -53,17 +53,30 @@ def test_admin_shows_limits_tokens_and_sessions(client, auth, mock_llm):
     assert token_ref("invite-a") in html
     assert "studio-mac" in html
     assert "1/80" in html
+    assert "1 of 80 used today" in html
+    assert "Devices" in html
+    assert "Device ID" in html
+    assert "Clear window" in html
+    assert "log-scroll" in html
+    assert device_id in html
     assert "/v1/complete" in html
     assert "proofread" in html
     assert "invite-a" not in html
     assert "sk-test" not in html
     assert "admin-secret" not in html
     assert "hello world" not in html
+    assert "Models" in html
+    assert "Primary" in html
+    assert "nvidia/nemotron-3-super-120b-a12b:free" in html
+    assert "available" in html
+    assert "unavailable" in html
 
 
 def test_admin_accepts_bearer(client):
     response = client.get("/admin", headers={"Authorization": "Bearer admin-secret"})
     assert response.status_code == 200
     assert "Limits" in response.text
+    assert "Devices" in response.text
     assert "Sessions" in response.text
     assert "Request log" in response.text
+    assert "Clear window" in response.text

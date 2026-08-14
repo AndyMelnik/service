@@ -204,16 +204,34 @@ def test_register_invalid_public_key(client, auth):
     assert response.json() == {"error": "Invalid device public key."}
 
 
-def test_register_conflict_and_idempotent(client, auth):
-    _, public_key, device_id = make_device()
+def test_register_updates_public_key(client, auth, mock_llm):
+    key, public_key, device_id = make_device()
     first = register_device(client, auth, public_key, device_id)
     assert first.status_code == 200
     again = register_device(client, auth, public_key, device_id)
     assert again.status_code == 200
-    _, other_key, _ = make_device()
-    conflict = register_device(client, auth, other_key, device_id)
-    assert conflict.status_code == 409
-    assert conflict.json() == {"error": "This device ID is already bound to another key."}
+    new_key, other_key, _ = make_device()
+    rotated = register_device(client, auth, other_key, device_id)
+    assert rotated.status_code == 200
+    headers, extras = complete_headers(new_key, device_id, "proofread", "hello")
+    response = client.post(
+        "/v1/complete",
+        headers=headers,
+        json={"action": "proofread", "text": "hello", "extras": extras},
+    )
+    assert response.status_code == 200
+
+
+def test_unwritable_data_path_falls_back(client, auth, monkeypatch):
+    fallback = service.Path(service.tempfile.gettempdir()) / "proovixy" / "store.json"
+    fallback.unlink(missing_ok=True)
+    monkeypatch.setenv("DATA_PATH", "/var/data/store.json")
+    service._RESOLVED_DATA_PATH = None
+    service._RESOLVED_DATA_FROM = None
+    _, public_key, device_id = make_device()
+    response = register_device(client, auth, public_key, device_id)
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
 
 
 def test_complete_unknown_device(client, mock_llm):
@@ -389,6 +407,11 @@ def test_reset_at_is_next_utc_midnight():
     assert service.utc_day(now) == "2026-08-13"
 
 
+def test_format_admin_time():
+    assert service.format_admin_time("2026-08-14T12:30:00+00:00") == "2026-08-14 12:30 UTC"
+    assert service.format_admin_time("") == ""
+
+
 def test_clean_output_strips_fences_and_dashes():
     raw = "```\nHello — world – yes\n```"
     assert service.clean_output(raw) == "Hello - world - yes"
@@ -425,3 +448,214 @@ def test_errors_never_use_detail_field(client):
     response = client.post("/v1/complete", json={"action": "proofread", "text": "x"})
     assert "detail" not in response.json()
     assert "error" in response.json()
+
+
+def test_llm_models_default_fallback_chain(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "openai/gpt-4o-mini")
+    monkeypatch.delenv("LLM_MODEL_FALLBACK", raising=False)
+    monkeypatch.delenv("LLM_MODEL_FALLBACK_2", raising=False)
+    assert service.llm_models() == [
+        "openai/gpt-4o-mini",
+        "nvidia/nemotron-3-super-120b-a12b:free",
+        "google/gemma-4-26b-a4b-it",
+    ]
+
+
+def test_llm_models_respects_env_overrides(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "primary/model")
+    monkeypatch.setenv("LLM_MODEL_FALLBACK", "first/fallback")
+    monkeypatch.setenv("LLM_MODEL_FALLBACK_2", "second/fallback")
+    assert service.llm_models() == ["primary/model", "first/fallback", "second/fallback"]
+
+
+def test_llm_models_skips_duplicate_and_blank_slots(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "google/gemma-4-26b-a4b-it")
+    monkeypatch.setenv("LLM_MODEL_FALLBACK", "")
+    monkeypatch.setenv("LLM_MODEL_FALLBACK_2", "google/gemma-4-26b-a4b-it")
+    assert service.llm_models() == ["google/gemma-4-26b-a4b-it"]
+
+
+def test_call_llm_falls_back_when_primary_fails(monkeypatch):
+    import asyncio
+
+    class FakeResponse:
+        def __init__(self, status_code, payload):
+            self.status_code = status_code
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            self.models = []
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            model = json["model"]
+            self.models.append(model)
+            FakeClient.calls.append(model)
+            if model == "openai/gpt-4o-mini":
+                return FakeResponse(404, {"error": {"message": "not found"}})
+            return FakeResponse(
+                200,
+                {"choices": [{"message": {"content": f"ok via {model}"}}]},
+            )
+
+    FakeClient.calls = []
+    monkeypatch.setenv("LLM_API_KEY", "sk-test")
+    monkeypatch.setenv("LLM_BASE_URL", "https://example.invalid/api/v1")
+    monkeypatch.setenv("LLM_MODEL", "openai/gpt-4o-mini")
+    monkeypatch.setattr(service.httpx, "AsyncClient", FakeClient)
+    monkeypatch.delenv("LLM_MODEL_FALLBACK", raising=False)
+    monkeypatch.delenv("LLM_MODEL_FALLBACK_2", raising=False)
+    result = asyncio.run(service.call_llm("proofread", "hello", ""))
+    assert result == "ok via nvidia/nemotron-3-super-120b-a12b:free"
+    assert FakeClient.calls[0] == "openai/gpt-4o-mini"
+    assert FakeClient.calls[1] == "nvidia/nemotron-3-super-120b-a12b:free"
+
+
+def test_call_llm_uses_second_fallback(monkeypatch):
+    import asyncio
+
+    class FakeResponse:
+        def __init__(self, status_code, payload):
+            self.status_code = status_code
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            model = json["model"]
+            FakeClient.calls.append(model)
+            if model != "google/gemma-4-26b-a4b-it":
+                return FakeResponse(429, {"error": {"message": "rate"}})
+            return FakeResponse(200, {"choices": [{"message": {"content": "gemma ok"}}]})
+
+    FakeClient.calls = []
+    monkeypatch.setenv("LLM_API_KEY", "sk-test")
+    monkeypatch.setenv("LLM_BASE_URL", "https://example.invalid/api/v1")
+    monkeypatch.setenv("LLM_MODEL", "openai/gpt-4o-mini")
+    monkeypatch.setattr(service.httpx, "AsyncClient", FakeClient)
+    monkeypatch.delenv("LLM_MODEL_FALLBACK", raising=False)
+    monkeypatch.delenv("LLM_MODEL_FALLBACK_2", raising=False)
+    result = asyncio.run(service.call_llm("proofread", "hello", ""))
+    assert result == "gemma ok"
+    assert FakeClient.calls == [
+        "openai/gpt-4o-mini",
+        "nvidia/nemotron-3-super-120b-a12b:free",
+        "google/gemma-4-26b-a4b-it",
+    ]
+
+
+def test_call_llm_unavailable_when_all_models_fail(monkeypatch):
+    import asyncio
+
+    from fastapi import HTTPException
+
+    class FakeResponse:
+        def __init__(self, status_code, payload):
+            self.status_code = status_code
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            return FakeResponse(503, {"error": {"message": "down"}})
+
+    monkeypatch.setenv("LLM_API_KEY", "sk-test")
+    monkeypatch.setenv("LLM_BASE_URL", "https://example.invalid/api/v1")
+    monkeypatch.setattr(service.httpx, "AsyncClient", FakeClient)
+    monkeypatch.delenv("LLM_MODEL_FALLBACK", raising=False)
+    monkeypatch.delenv("LLM_MODEL_FALLBACK_2", raising=False)
+    try:
+        asyncio.run(service.call_llm("proofread", "hello", ""))
+    except HTTPException as exc:
+        assert exc.status_code == 502
+        assert exc.detail == "The language model is unavailable."
+    else:
+        raise AssertionError("expected HTTPException")
+
+
+def test_probe_llm_model_available(monkeypatch):
+    class FakeResponse:
+        status_code = 200
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, url, headers=None, json=None):
+            assert json["model"] == "openai/gpt-4o-mini"
+            assert json["max_tokens"] == 1
+            return FakeResponse()
+
+    monkeypatch.setenv("LLM_API_KEY", "sk-test")
+    monkeypatch.setenv("LLM_BASE_URL", "https://example.invalid/api/v1")
+    monkeypatch.setattr(service.httpx, "Client", FakeClient)
+    result = service.probe_llm_model("openai/gpt-4o-mini")
+    assert result["ok"] is True
+    assert result["state"] == "available"
+    assert result["detail"] == "HTTP 200"
+
+
+def test_llm_model_statuses_uses_roles_and_cache(monkeypatch):
+    calls = {"n": 0}
+
+    def fake_probe(model):
+        calls["n"] += 1
+        return {
+            "model": model,
+            "ok": model.endswith(":free"),
+            "state": "available" if model.endswith(":free") else "unavailable",
+            "detail": "HTTP 200" if model.endswith(":free") else "HTTP 402",
+        }
+
+    monkeypatch.setenv("LLM_MODEL", "openai/gpt-4o-mini")
+    monkeypatch.delenv("LLM_MODEL_FALLBACK", raising=False)
+    monkeypatch.delenv("LLM_MODEL_FALLBACK_2", raising=False)
+    monkeypatch.setenv("LLM_MODEL_STATUS_TTL_SECONDS", "60")
+    monkeypatch.setattr(service, "probe_llm_model", fake_probe)
+    service.MODEL_STATUS_CACHE["at"] = 0.0
+    service.MODEL_STATUS_CACHE["payload"] = []
+    first = service.llm_model_statuses(force=True)
+    second = service.llm_model_statuses()
+    assert [row["role"] for row in first] == ["Primary", "Fallback 1", "Fallback 2"]
+    assert first[0]["state"] == "unavailable"
+    assert first[1]["state"] == "available"
+    assert first[1]["model"] == "nvidia/nemotron-3-super-120b-a12b:free"
+    assert second == first
+    assert calls["n"] == 3

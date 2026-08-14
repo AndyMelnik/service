@@ -6,9 +6,11 @@ import logging
 import os
 import re
 import secrets
+import tempfile
 import threading
 import time
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -53,8 +55,9 @@ ADMIN_COOKIE = "proovixy_admin"
 ADMIN_SESSIONS: dict[str, float] = {}
 ADMIN_LOGIN_ATTEMPTS: dict[str, list[float]] = {}
 API_RATE_ATTEMPTS: dict[str, list[float]] = {}
+MODEL_STATUS_CACHE: dict[str, object] = {"at": 0.0, "iso": "", "payload": []}
 ADMIN_HTML_HEADERS = {
-    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'",
+    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; form-action 'self'",
     "X-Frame-Options": "DENY",
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "no-referrer",
@@ -123,8 +126,36 @@ def max_devices_per_token() -> int:
     return max(0, env_int("MAX_DEVICES_PER_TOKEN", 3))
 
 
+_RESOLVED_DATA_PATH: Path | None = None
+_RESOLVED_DATA_FROM: str | None = None
+
+
+def _can_write_dir(directory: Path) -> bool:
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        probe = directory / ".proovixy-write-test"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink(missing_ok=True)
+        return True
+    except OSError:
+        return False
+
+
 def data_path() -> Path:
-    return Path(env_str("DATA_PATH", str(ROOT / "data" / "store.json")))
+    global _RESOLVED_DATA_PATH, _RESOLVED_DATA_FROM
+    configured = env_str("DATA_PATH", str(ROOT / "data" / "store.json"))
+    if _RESOLVED_DATA_PATH is not None and _RESOLVED_DATA_FROM == configured:
+        return _RESOLVED_DATA_PATH
+    path = Path(configured)
+    if not _can_write_dir(path.parent):
+        fallback = Path(tempfile.gettempdir()) / "proovixy" / "store.json"
+        log.warning("DATA_PATH %s is not writable; using %s", path, fallback)
+        path = fallback
+        if not _can_write_dir(path.parent):
+            fail(500, "Server storage is not writable. Check DATA_PATH.")
+    _RESOLVED_DATA_PATH = path
+    _RESOLVED_DATA_FROM = configured
+    return path
 
 
 def llm_base_url() -> str:
@@ -145,7 +176,104 @@ def llm_completions_url() -> str:
 
 
 def llm_model() -> str:
-    return env_str("LLM_MODEL", "openai/gpt-4o-mini")
+    return env_str("LLM_MODEL", "openai/gpt-4o-mini").strip() or "openai/gpt-4o-mini"
+
+
+def llm_model_fallback() -> str:
+    return env_str("LLM_MODEL_FALLBACK", "nvidia/nemotron-3-super-120b-a12b:free").strip()
+
+
+def llm_model_fallback_2() -> str:
+    return env_str("LLM_MODEL_FALLBACK_2", "google/gemma-4-26b-a4b-it").strip()
+
+
+def llm_models() -> list[str]:
+    models: list[str] = []
+    seen: set[str] = set()
+    for model in (llm_model(), llm_model_fallback(), llm_model_fallback_2()):
+        if model and model not in seen:
+            models.append(model)
+            seen.add(model)
+    return models
+
+
+def llm_model_status_ttl() -> int:
+    return max(15, env_int("LLM_MODEL_STATUS_TTL_SECONDS", 60))
+
+
+def probe_llm_model(model: str) -> dict:
+    if not llm_api_key():
+        return {
+            "model": model,
+            "ok": False,
+            "state": "not configured",
+            "detail": "LLM_API_KEY missing",
+        }
+    try:
+        url = llm_completions_url()
+    except HTTPException:
+        return {
+            "model": model,
+            "ok": False,
+            "state": "unreachable",
+            "detail": "LLM base URL invalid",
+        }
+    try:
+        with httpx.Client(timeout=min(8.0, llm_timeout_seconds())) as client:
+            response = client.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {llm_api_key()}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "max_tokens": 1,
+                    "temperature": 0,
+                    "messages": [{"role": "user", "content": "."}],
+                },
+            )
+        if response.status_code < 400:
+            return {
+                "model": model,
+                "ok": True,
+                "state": "available",
+                "detail": f"HTTP {response.status_code}",
+            }
+        return {
+            "model": model,
+            "ok": False,
+            "state": "unavailable",
+            "detail": f"HTTP {response.status_code}",
+        }
+    except httpx.TimeoutException:
+        return {"model": model, "ok": False, "state": "timeout", "detail": "timed out"}
+    except httpx.HTTPError:
+        return {"model": model, "ok": False, "state": "unreachable", "detail": "provider error"}
+
+
+def llm_model_statuses(force: bool = False) -> list[dict]:
+    now = time.time()
+    cached_at = float(MODEL_STATUS_CACHE.get("at") or 0)
+    cached_payload = MODEL_STATUS_CACHE.get("payload") or []
+    if not force and cached_payload and now - cached_at < llm_model_status_ttl():
+        return list(cached_payload)
+
+    models = llm_models()
+    if not models:
+        rows: list[dict] = []
+    else:
+        with ThreadPoolExecutor(max_workers=max(1, len(models))) as pool:
+            probed = list(pool.map(probe_llm_model, models))
+        rows = []
+        for index, item in enumerate(probed):
+            role = "Primary" if index == 0 else f"Fallback {index}"
+            rows.append({**item, "role": role})
+
+    MODEL_STATUS_CACHE["at"] = now
+    MODEL_STATUS_CACHE["iso"] = utc_now().strftime("%Y-%m-%d %H:%M:%S")
+    MODEL_STATUS_CACHE["payload"] = rows
+    return list(rows)
 
 
 def llm_api_key() -> str:
@@ -560,14 +688,36 @@ def remember_event(request: Request, status_code: int, latency_ms: int) -> None:
         )
 
 
+def format_admin_time(value: str) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    except ValueError:
+        return raw
+
+
 def admin_payload() -> dict:
     now = utc_now()
     day = utc_day(now)
     store = load_store()
     events = list(EVENTS)[::-1]
+    token_names = {
+        token_ref(token): f"token {index}"
+        for index, token in enumerate(allowed_tokens(), start=1)
+    }
     sessions = []
     for device_id, device in store.get("devices", {}).items():
         quota = quota_view(device, now)
+        used = quota["used"]
+        limit = quota["limit"]
+        remaining = max(0, limit - used)
+        exhausted = limit > 0 and used >= limit
+        token_key = device.get("tokenRef") or ""
         sessions.append(
             {
                 "id": device_id,
@@ -575,9 +725,20 @@ def admin_payload() -> dict:
                 "name": device.get("name") or "",
                 "createdAt": device.get("createdAt") or "",
                 "lastSeenAt": device.get("lastSeenAt") or "",
-                "tokenRef": device.get("tokenRef") or "",
-                "used": quota["used"],
-                "limit": quota["limit"],
+                "createdLabel": format_admin_time(device.get("createdAt") or "") or "unknown",
+                "lastSeenLabel": format_admin_time(device.get("lastSeenAt") or "") or "never",
+                "resetLabel": format_admin_time(quota["resetAt"]) or quota["resetAt"],
+                "tokenRef": token_key,
+                "tokenName": token_names.get(token_key, "unknown invite"),
+                "used": used,
+                "limit": limit,
+                "remaining": remaining,
+                "quotaLabel": (
+                    f"{used} of {limit} used today, {remaining} left"
+                    if limit > 0
+                    else f"{used} requests today, unlimited"
+                ),
+                "status": "Quota reached" if exhausted else "Active",
             }
         )
     sessions.sort(key=lambda row: row["lastSeenAt"] or row["createdAt"], reverse=True)
@@ -608,7 +769,7 @@ def admin_payload() -> dict:
             {"label": "Timestamp skew", "value": f"{timestamp_skew()}s"},
             {"label": "Nonce TTL", "value": f"{nonce_ttl_seconds()}s"},
             {"label": "Devices / invite", "value": max_devices_per_token() or "unlimited"},
-            {"label": "Model", "value": llm_model()},
+            {"label": "Model", "value": " → ".join(llm_models())},
             {"label": "LLM base", "value": redact_admin_value("LLM base", llm_base_url())},
             {"label": "LLM path", "value": llm_chat_path()},
             {"label": "LLM timeout", "value": f"{llm_timeout_seconds():g}s"},
@@ -623,6 +784,8 @@ def admin_payload() -> dict:
         "tokens": tokens,
         "sessions": sessions,
         "events": events[: admin_log_display_limit()],
+        "models": [],
+        "modelsCheckedAt": "",
     }
 
 
@@ -686,43 +849,71 @@ async def call_llm(action: str, text: str, extras: str) -> str:
         "TEXT>>>"
     )
 
-    try:
-        async with httpx.AsyncClient(timeout=llm_timeout_seconds()) as client:
-            response = await client.post(
-                llm_completions_url(),
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": llm_model(),
-                    "temperature": llm_temperature(action),
-                    "max_tokens": max_tokens_for(action, text),
-                    "messages": [
-                        {"role": "system", "content": prompt},
-                        {"role": "user", "content": user},
-                    ],
-                },
-            )
-    except httpx.TimeoutException:
+    models = llm_models()
+    last_error = "unavailable"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    async with httpx.AsyncClient(timeout=llm_timeout_seconds()) as client:
+        for model in models:
+            try:
+                response = await client.post(
+                    llm_completions_url(),
+                    headers=headers,
+                    json={
+                        "model": model,
+                        "temperature": llm_temperature(action),
+                        "max_tokens": max_tokens_for(action, text),
+                        "messages": [
+                            {"role": "system", "content": prompt},
+                            {"role": "user", "content": user},
+                        ],
+                    },
+                )
+            except httpx.TimeoutException:
+                log.warning("llm_timeout model=%s action=%s", model, action)
+                last_error = "timed out"
+                continue
+            except httpx.HTTPError:
+                log.warning("llm_http_error model=%s action=%s", model, action)
+                last_error = "unavailable"
+                continue
+
+            if response.status_code >= 400:
+                log.warning(
+                    "llm_failed status=%s model=%s action=%s",
+                    response.status_code,
+                    model,
+                    action,
+                )
+                last_error = "unavailable"
+                continue
+
+            try:
+                payload = response.json()
+                content = payload["choices"][0]["message"]["content"]
+            except (ValueError, KeyError, IndexError, TypeError):
+                log.warning("llm_bad_payload model=%s action=%s", model, action)
+                last_error = "unavailable"
+                continue
+
+            cleaned = clean_output(content if isinstance(content, str) else "")
+            if not cleaned:
+                log.warning("llm_empty model=%s action=%s", model, action)
+                last_error = "empty"
+                continue
+
+            if model != models[0]:
+                log.info("llm_fallback_used model=%s action=%s", model, action)
+            return cleaned
+
+    if last_error == "timed out":
         fail(502, "The language model timed out.")
-    except httpx.HTTPError:
-        fail(502, "The language model is unavailable.")
-
-    if response.status_code >= 400:
-        log.warning("llm_failed status=%s action=%s", response.status_code, action)
-        fail(502, "The language model is unavailable.")
-
-    try:
-        payload = response.json()
-        content = payload["choices"][0]["message"]["content"]
-    except (ValueError, KeyError, IndexError, TypeError):
-        fail(502, "The language model is unavailable.")
-
-    cleaned = clean_output(content if isinstance(content, str) else "")
-    if not cleaned:
+    if last_error == "empty":
         fail(502, "The model returned an empty response.")
-    return cleaned
+    fail(502, "The language model is unavailable.")
 
 
 @app.middleware("http")
@@ -801,16 +992,24 @@ def register(request: Request, body: RegisterBody, authorization: str | None = H
     with locked_store() as store:
         devices = store.setdefault("devices", {})
         existing = devices.get(body.deviceId)
-        if existing and existing.get("publicKey") != body.publicKey:
-            fail(409, "This device ID is already bound to another key.")
-        if not existing:
-            ref = token_ref(token)
+        ref = token_ref(token)
+        if isinstance(existing, dict):
+            existing["publicKey"] = body.publicKey
+            existing["lastSeenAt"] = seen
+            existing["tokenRef"] = ref
+            if body.name:
+                existing["name"] = body.name
+        else:
             cap = max_devices_per_token()
             if cap > 0:
-                owned = sum(1 for device in devices.values() if device.get("tokenRef") == ref)
+                owned = sum(
+                    1
+                    for device in devices.values()
+                    if isinstance(device, dict) and device.get("tokenRef") == ref
+                )
                 if owned >= cap:
                     fail(403, "Device limit reached for this invite.")
-            devices[body.deviceId] = {
+            existing = {
                 "deviceId": body.deviceId,
                 "publicKey": body.publicKey,
                 "name": body.name,
@@ -819,11 +1018,7 @@ def register(request: Request, body: RegisterBody, authorization: str | None = H
                 "tokenRef": ref,
                 "usage": {},
             }
-            existing = devices[body.deviceId]
-        else:
-            existing["lastSeenAt"] = seen
-            if body.name:
-                existing["name"] = body.name
+            devices[body.deviceId] = existing
         quota = quota_view(existing)
     return {"ok": True, "quota": quota}
 
@@ -944,8 +1139,11 @@ def admin_home(
         fail(404, "Not found.")
     if not admin_authorized(admin_cookie, authorization):
         return admin_html(render_login())
+    models = llm_model_statuses()
     with LOCK:
         payload = admin_payload()
+    payload["models"] = models
+    payload["modelsCheckedAt"] = str(MODEL_STATUS_CACHE.get("iso") or "")
     return admin_html(render_dashboard(payload))
 
 

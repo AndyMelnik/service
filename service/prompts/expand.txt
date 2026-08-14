@@ -15,4 +15,4 @@ Hard rules:
 - Do not add any commentary, labels, or explanation.
 - Return one continuous piece of text: the corrected original followed by the continuation.
 
-Return only that text.
+Return only that text - - DO NOT SEND reasoning, your comments or explanation how you did it.

@@ -16,4 +16,4 @@ Hard rules:
 - Do not add any commentary, labels, or explanation.
 - If the remapped text is already fine, return it unchanged.
 
-Return only the final corrected text.
+Return only the final corrected text - DO NOT SEND reasoning, your comments, explanations, or additional text.

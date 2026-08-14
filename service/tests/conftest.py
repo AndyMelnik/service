@@ -18,6 +18,38 @@ def client(tmp_path, monkeypatch):
     service.ADMIN_LOGIN_ATTEMPTS.clear()
     service.API_RATE_ATTEMPTS.clear()
     service.EVENTS.clear()
+    service.MODEL_STATUS_CACHE["at"] = 0.0
+    service.MODEL_STATUS_CACHE["iso"] = ""
+    service.MODEL_STATUS_CACHE["payload"] = []
+    monkeypatch.setattr(
+        service,
+        "llm_model_statuses",
+        lambda force=False: [
+            {
+                "role": "Primary",
+                "model": "openai/gpt-4o-mini",
+                "ok": True,
+                "state": "available",
+                "detail": "HTTP 200",
+            },
+            {
+                "role": "Fallback 1",
+                "model": "nvidia/nemotron-3-super-120b-a12b:free",
+                "ok": True,
+                "state": "available",
+                "detail": "HTTP 200",
+            },
+            {
+                "role": "Fallback 2",
+                "model": "google/gemma-4-26b-a4b-it",
+                "ok": False,
+                "state": "unavailable",
+                "detail": "HTTP 404",
+            },
+        ],
+    )
+    service._RESOLVED_DATA_PATH = None
+    service._RESOLVED_DATA_FROM = None
     return TestClient(service.app, raise_server_exceptions=False)
 
 

@@ -71,6 +71,44 @@ button {
 }
 .err { color: var(--bad); margin-top: 12px; }
 .row { display: flex; justify-content: space-between; gap: 12px; }
+.devices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+}
+.device {
+  border: 1px solid var(--line);
+  padding: 14px 16px;
+}
+.device h2 {
+  font-size: 16px;
+  margin: 0 0 8px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.device p { margin: 0 0 6px; }
+.device .id { word-break: break-all; color: var(--mute); font-size: 12px; }
+.log-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.log-toolbar button { margin-top: 0; padding: 6px 12px; }
+.log-scroll {
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--line);
+}
+.log-scroll table { margin: 0; }
+.log-scroll thead th {
+  position: sticky;
+  top: 0;
+  background: var(--paper);
+  z-index: 1;
+}
+.log-scroll .empty { padding: 12px 8px; }
 """
 
 
@@ -137,6 +175,14 @@ def render_login(error: str = "") -> str:
 """
 
 
+def _model_state_class(state: str) -> str:
+    if state == "available":
+        return "ok"
+    if state in {"timeout", "not configured"}:
+        return "warn"
+    return "bad"
+
+
 def render_dashboard(data: dict) -> str:
     limits = data["limits"]
     limit_items = "".join(
@@ -163,8 +209,10 @@ def render_dashboard(data: dict) -> str:
     )
 
     session_rows = []
+    device_cards = []
     for row in data["sessions"]:
         cls = _quota_class(row["used"], row["limit"])
+        status_cls = "bad" if row.get("status") == "Quota reached" else "ok"
         session_rows.append(
             "<tr>"
             + _cell(row["name"] or "unnamed")
@@ -174,17 +222,37 @@ def render_dashboard(data: dict) -> str:
             + _cell(row["lastSeenAt"] or row["createdAt"] or "—")
             + "</tr>"
         )
+        device_cards.append(
+            "<article class=\"device\">"
+            f"<h2>{escape(row['name'] or 'Unnamed device')}</h2>"
+            f"<p class=\"{status_cls}\">{escape(str(row.get('status') or 'Active'))}</p>"
+            f"<p>Registered {escape(str(row.get('createdLabel') or 'unknown'))}</p>"
+            f"<p>Last seen {escape(str(row.get('lastSeenLabel') or 'never'))}</p>"
+            f"<p>Invite {escape(str(row.get('tokenName') or 'unknown invite'))}"
+            f" ({escape(row.get('tokenRef') or '—')})</p>"
+            f"<p class=\"{cls}\">{escape(str(row.get('quotaLabel') or f'{row['used']}/{row['limit']}'))}</p>"
+            f"<p>Resets {escape(str(row.get('resetLabel') or '—'))}</p>"
+            f"<p class=\"id\">Device ID {escape(row.get('id') or row.get('shortId') or '—')}</p>"
+            "</article>"
+        )
     sessions_html = (
         "".join(session_rows)
         if session_rows
         else '<tr><td colspan="5" class="empty">No devices registered yet.</td></tr>'
+    )
+    devices_html = (
+        f'<div class="devices">{"".join(device_cards)}</div>'
+        if device_cards
+        else '<p class="empty">No devices registered yet.</p>'
     )
 
     event_rows = []
     for row in data["events"]:
         cls = _status_class(int(row["status"]))
         event_rows.append(
-            "<tr>"
+            "<tr"
+            + f' data-at="{escape(str(row["at"]))}"'
+            + ">"
             + _cell(row["at"])
             + _cell(row["path"])
             + _cell(row["action"])
@@ -199,6 +267,24 @@ def render_dashboard(data: dict) -> str:
         if event_rows
         else '<tr><td colspan="7" class="empty">No requests in this process yet.</td></tr>'
     )
+
+    model_rows = []
+    for row in data.get("models") or []:
+        cls = _model_state_class(str(row.get("state") or ""))
+        model_rows.append(
+            "<tr>"
+            + _cell(row.get("role") or "—")
+            + _cell(row.get("model") or "—")
+            + f'<td class="{cls}">{escape(str(row.get("state") or "—"))}</td>'
+            + _cell(row.get("detail") or "—")
+            + "</tr>"
+        )
+    models_html = (
+        "".join(model_rows)
+        if model_rows
+        else '<tr><td colspan="4" class="empty">No models configured.</td></tr>'
+    )
+    models_checked = escape(str(data.get("modelsCheckedAt") or "—"))
 
     generated = escape(data["generatedAt"])
     return f"""<!doctype html>
@@ -219,6 +305,17 @@ def render_dashboard(data: dict) -> str:
     <h1>Limits</h1>
     <dl class="limits">{limit_items}</dl>
 
+    <h1>Models</h1>
+    <p class="meta">Last check UTC {models_checked}</p>
+    <table>
+      <thead>
+        <tr>
+          <th>Role</th><th>Model</th><th>Status</th><th>Detail</th>
+        </tr>
+      </thead>
+      <tbody>{models_html}</tbody>
+    </table>
+
     <h1>Tokens</h1>
     <table>
       <thead>
@@ -229,6 +326,9 @@ def render_dashboard(data: dict) -> str:
       </thead>
       <tbody>{tokens_html}</tbody>
     </table>
+
+    <h1>Devices</h1>
+    {devices_html}
 
     <h1>Sessions</h1>
     <table>
@@ -242,16 +342,62 @@ def render_dashboard(data: dict) -> str:
     </table>
 
     <h1>Request log</h1>
-    <table>
-      <thead>
-        <tr>
-          <th>Time</th><th>Path</th><th>Action</th><th class="num">Status</th>
-          <th class="num">ms</th><th>Session</th><th>Token</th>
-        </tr>
-      </thead>
-      <tbody>{events_html}</tbody>
-    </table>
+    <div class="log-toolbar">
+      <p class="meta">Scroll stays in this window. Clear hides rows here only — server history is kept.</p>
+      <button type="button" id="clear-log">Clear window</button>
+    </div>
+    <div class="log-scroll" id="log-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Time</th><th>Path</th><th>Action</th><th class="num">Status</th>
+            <th class="num">ms</th><th>Session</th><th>Token</th>
+          </tr>
+        </thead>
+        <tbody id="log-body">{events_html}</tbody>
+      </table>
+    </div>
   </main>
+  <script>
+    (function () {{
+      var KEY = "proovixyLogHideUntil";
+      var SCROLL = "proovixyLogScroll";
+      var box = document.getElementById("log-scroll");
+      var body = document.getElementById("log-body");
+      var button = document.getElementById("clear-log");
+      if (!box || !body) return;
+
+      function newestStamp() {{
+        var row = body.querySelector("tr[data-at]");
+        return row ? row.getAttribute("data-at") : "";
+      }}
+
+      function applyHide() {{
+        var until = sessionStorage.getItem(KEY) || "";
+        if (!until) return;
+        body.querySelectorAll("tr[data-at]").forEach(function (row) {{
+          if ((row.getAttribute("data-at") || "") <= until) row.remove();
+        }});
+        if (!body.querySelector("tr[data-at]")) {{
+          body.innerHTML = '<tr><td colspan="7" class="empty">Log window cleared. Server history is unchanged.</td></tr>';
+        }}
+      }}
+
+      applyHide();
+      box.scrollTop = Number(sessionStorage.getItem(SCROLL) || 0);
+      box.addEventListener("scroll", function () {{
+        sessionStorage.setItem(SCROLL, String(box.scrollTop));
+      }});
+      if (button) {{
+        button.addEventListener("click", function () {{
+          sessionStorage.setItem(KEY, newestStamp());
+          sessionStorage.setItem(SCROLL, "0");
+          applyHide();
+          box.scrollTop = 0;
+        }});
+      }}
+    }})();
+  </script>
 </body>
 </html>
 """

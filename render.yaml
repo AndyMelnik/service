@@ -13,6 +13,10 @@ services:
         sync: false
       - key: LLM_MODEL
         sync: false
+      - key: LLM_MODEL_FALLBACK
+        sync: false
+      - key: LLM_MODEL_FALLBACK_2
+        sync: false
       - key: LLM_CHAT_PATH
         sync: false
       - key: LLM_TIMEOUT_SECONDS
@@ -22,6 +26,8 @@ services:
       - key: LLM_TEMPERATURE
         sync: false
       - key: LLM_TEMPERATURE_EXPAND
+        sync: false
+      - key: LLM_MODEL_STATUS_TTL_SECONDS
         sync: false
       - key: SERVICE_TOKENS
         sync: false
