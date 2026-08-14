@@ -3,9 +3,8 @@ services:
     name: proovixy-api
     runtime: python
     pythonVersion: "3.12.8"
-    rootDir: service
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    buildCommand: pip install -r service/requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT --app-dir service
     healthCheckPath: /v1/health
     envVars:
       - key: LLM_BASE_URL
